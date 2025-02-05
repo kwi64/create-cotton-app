@@ -1,14 +1,26 @@
 {
   "name": "create-cotton-app",
   "version": "0.1.0.0",
-  "description": "",
+  "description": "CottonJS - A minimalistic and customizable react SSR framework built on top of Node.js http module",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "node",
+    "npm",
+    "create-cotton-app"
+  ],
+  "license": "MIT",
+  "homepage": "https://www.cottonjs.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kwi64/cottonjs.git"
+  },
+  "author": {
+    "name": "Kithmal Wimalaratne",
+    "email": "kithmal.w@outlook.com"
+  },
   "dependencies": {
     "chalk": "^5.4.1",
     "commander": "^13.0.0"
