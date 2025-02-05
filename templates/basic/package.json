@@ -1,0 +1,27 @@
+{
+  "name": "cottonjs",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node cotton.js",
+    "build": "node build.js",
+    "prod": "node build.js && cd build/ && node server.js",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/busboy": "^1.5.4",
+    "@types/node": "^22.10.8",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "@types/ws": "^8.5.13",
+    "chokidar": "^4.0.3",
+    "crypto": "^1.0.1",
+    "esbuild": "^0.24.2",
+    "ws": "^8.18.0"
+  }
+}

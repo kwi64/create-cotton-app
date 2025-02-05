@@ -1,0 +1,34 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  min-height: fit-content;
+  height: 100%;
+  overflow-y: auto;
+}
+.logo {
+  height: 10rem;
+  aspect-ratio: 1;
+  background-image: linear-gradient(
+    90deg in oklch longer hue,
+    rgb(255, 106, 0),
+    rgb(0, 128, 111)
+  );
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-image: url("/public/logo.svg");
+}
+.logo:hover {
+  filter: drop-shadow(0 0 5em purple);
+}
+.container code {
+  font-size: 1.5em;
+  padding: 2pt 6pt;
+  border-radius: 2pt;
+  background-color: #383838;
+}
+.container a {
+  color: inherit;
+}

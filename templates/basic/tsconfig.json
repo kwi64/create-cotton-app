@@ -1,0 +1,19 @@
+// Having an invalid configuration causes failure in the build
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "target": "ES2015",
+    "strict": true,
+    "allowJs": true,
+    "checkJs": true,
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {},
+    "typeRoots": ["./node_modules/@types", "./types.ts"]
+  },
+  "exclude": ["node_modules", "build"]
+}
