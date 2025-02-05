@@ -1,6 +1,12 @@
 ### create-cotton-app CLI tool
 
-##### Usage
+##### Get the CLI tool
+
+```bash
+npm install -g create-cotton-app
+```
+
+##### Using the CLI tool to create a new app
 
 ```bash
 create-cotton-app .
