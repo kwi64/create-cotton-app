@@ -1,57 +1,67 @@
 #!/usr/bin/env node
 
-const { execSync } = require("child_process");
-const {
+import { execSync } from "child_process";
+import {
   readFileSync,
   existsSync,
   writeFileSync,
   mkdirSync,
   copyFileSync,
   readdirSync,
-} = require("fs");
-const { join, dirname, resolve } = require("path");
-const { Command } = require("commander");
-const { green, red, blue, yellow } = require("chalk");
-const { fileURLToPath } = require("url");
+} from "fs";
+import { join, dirname, resolve, basename } from "path";
+import { Command } from "commander";
+import chalk from "chalk";
+import { fileURLToPath } from "url";
 
 const program = new Command();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const packageJsonPath = join(__dirname, "package.json");
+const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 
 const TEMPLATE_DIR = resolve(__dirname, "templates", "basic");
 
 program
   .name("create-cotton-app")
-  .version("1.0.0")
-  .arguments("<appName>")
+  .version(packageJson.version)
+  .argument("[appName]", "Project name (default: current directory)")
   .description("Create a new Cotton app")
   .action((appName) => {
-    const appPath = resolve(appName);
+    const appPath = resolve(
+      appName === "." || !appName ? process.cwd() : appName
+    );
+    const finalAppName =
+      appName === "." || !appName ? basename(process.cwd()) : appName;
 
-    console.log(green(`Creating a new Cotton app in ${appPath}...`));
+    console.log(chalk.green(`Creating a new Cotton app in ${appPath}...`));
 
-    if (existsSync(appPath)) {
-      console.error(red(`Error: Directory "${appName}" already exists.`));
+    if (existsSync(appPath) && appPath !== process.cwd()) {
+      console.error(chalk.red(`Error: Directory "${appName}" already exists.`));
       process.exit(1);
     }
 
-    console.log(blue("Copying template files..."));
+    console.log(chalk.blue("Copying template files..."));
     copyDirectory(TEMPLATE_DIR, appPath);
 
-    console.log(blue("Customizing project files..."));
+    console.log(chalk.blue("Customizing project files..."));
+
     const packageJsonPath = join(appPath, "package.json");
     const packageJsonContent = readFileSync(packageJsonPath, "utf8").replace(
       /{{appName}}/g,
-      appName
+      finalAppName
     );
     writeFileSync(packageJsonPath, packageJsonContent);
 
-    console.log(blue("Installing dependencies..."));
+    console.log(chalk.blue("Installing dependencies..."));
+
     execSync("npm install", { cwd: appPath, stdio: "inherit" });
 
-    console.log(green("Cotton app created successfully!"));
-    console.log(yellow(`\nNext steps:\n  cd ${appName}\n  npm run dev\n`));
+    console.log(chalk.green("CottonJS app created successfully!"));
+    console.log(
+      chalk.yellow(`\nNext steps:\n  cd ${appPath}\n  npm run dev\n`)
+    );
   });
 
 program.parse(process.argv);

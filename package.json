@@ -2,6 +2,10 @@
   "name": "create-cotton-app",
   "version": "1.0.0-alpha.1",
   "description": "CottonJS - A minimalistic and customizable react SSR framework built on top of Node.js http module",
+  "type": "module",
+  "bin": {
+    "create-cotton-app": "./index.js"
+  },
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
