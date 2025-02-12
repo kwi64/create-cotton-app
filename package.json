@@ -19,7 +19,7 @@
   "homepage": "https://www.cottonjs.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kwi64/cottonjs.git"
+    "url": "https://github.com/kwi64/create-cotton-app.git"
   },
   "author": {
     "name": "Kithmal Wimalaratne",
