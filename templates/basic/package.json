@@ -20,7 +20,6 @@
     "@types/react-dom": "^19.0.3",
     "@types/ws": "^8.5.13",
     "chokidar": "^4.0.3",
-    "crypto": "^1.0.1",
     "esbuild": "^0.24.2",
     "ws": "^8.18.0"
   }

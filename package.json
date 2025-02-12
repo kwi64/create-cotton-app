@@ -1,6 +1,6 @@
 {
   "name": "create-cotton-app",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.3",
   "description": "CottonJS - A minimalistic and customizable react SSR framework built on top of Node.js http module",
   "type": "module",
   "bin": {
