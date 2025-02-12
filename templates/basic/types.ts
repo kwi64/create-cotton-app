@@ -29,13 +29,22 @@ declare module "cottonjs" {
     getBody(): Promise<any>;
   }
 
+  type MetaName = "description" | "keywords" | "author" | "viewport";
+
+  type PageMeta = {
+    [key in MetaName]?: string;
+  };
+
   type RouteKey = `/${string}`;
+
+  type LoaderFile = `${string}.loader${".js" | ".ts" | ""}`;
 
   type Routes = {
     [key: RouteKey]: {
+      group?: string;
       name?: string;
       page?: string;
-      loader?: string;
+      loader?: LoaderFile;
     };
   };
 
@@ -72,11 +81,12 @@ declare module "cottonjs" {
     [key: string]: string;
   }
 
-  interface CottonPageParams {
-    cotton: {
-      route: string;
-      route_name: string | undefined;
-      route_params: {};
+  interface CottonData {
+    route: {
+      key: string;
+      name: string | undefined;
+      group: string | undefined;
+      params: {};
     };
     loader: {} | undefined;
   }

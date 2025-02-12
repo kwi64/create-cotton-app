@@ -41,6 +41,8 @@ export async function getLoaderData(route) {
         ? extname(loader_data_location)
         : ""
     );
+
+    console.log("filename", filename);
     let module_path = join(dirname(loader_data_location), filename + ".js");
 
     try {
@@ -118,7 +120,7 @@ export const mainjs = `
 
     import("./${build_folder}/route.config")
       .then(({ default: routes }) => {
-        const loadPage = routes[data.cotton.route].module;
+        const loadPage = routes[data.route.key].module;
         loadPage()
           .then(({ default: page }) => {
             hydrateRoot(document.getElementById("root"), createElement(page, data));

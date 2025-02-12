@@ -9,6 +9,7 @@ import config from "../cotton.config.js";
 import mimeTypes from "./mimeTypes.js";
 
 const host = config.host || "localhost";
+const dev_env_scroll_watch_id = config.dev_env_scroll_watch_id || "root";
 const dev_env_websocket_port = config.dev_env_websocket_port || 4522;
 
 /**
@@ -68,11 +69,15 @@ export async function serveFile(res, url) {
 export async function servePage({ res, pathname, route, params }) {
   const [loader_error, loader_data] = await getLoaderData(route);
 
+  /**
+   * @type {import("cottonjs").CottonData}
+   */
   const cotton_data = {
-    cotton: {
-      route: route,
-      route_name: routes[route].name,
-      route_params: params ?? {},
+    route: {
+      key: route,
+      group: routes[route].group,
+      name: routes[route].name,
+      params: params ?? {},
     },
     loader: loader_data,
   };
@@ -86,10 +91,26 @@ export async function servePage({ res, pathname, route, params }) {
     query: { url_path: pathname },
   });
 
-  const ws_client_js = `const socket = new WebSocket("${ws}");
+  const dev_js = `
+            const _scroll_watch_element = document.getElementById("${dev_env_scroll_watch_id}");
+            var _scroll_position = localStorage.getItem('${pathname}_scroll_position');
+
+            if (_scroll_position && _scroll_watch_element) {
+              _scroll_watch_element.scrollTo(0, _scroll_position);
+              localStorage.removeItem('${pathname}_scroll_position');
+            }
+
+            const socket = new WebSocket("${ws}");
             socket.onmessage = (event) => {
               const { type } = JSON.parse(event.data);
-              if (type === "reload") location.reload();
+              if (type === "reload") {
+                
+                if(_scroll_watch_element){
+                  localStorage.setItem("${pathname}_scroll_position", _scroll_watch_element.scrollTop);
+                }
+
+                location.reload();
+              }
             };`;
 
   const html_path = join(resolve(), "index.html");
@@ -97,9 +118,11 @@ export async function servePage({ res, pathname, route, params }) {
   const globalCssExists = existsSync(join(resolve(), "global.css"));
   let moduleCssExists = existsSync(join(resolve(), "module.css"));
 
-  const globalCss = '<link rel="stylesheet" href="/global.css" />';
-  const moduleCss = '<link rel="stylesheet" href="/module.css" />';
-  const mainjs = '<script defer type="module" src="/client/main.js"></script>';
+  const timestamp = new Date().getTime(); // to prevent cashing, specially for the module css
+
+  const globalCss = `<link rel="stylesheet" href="/global.css?t=${timestamp}" />`;
+  const moduleCss = `<link rel="stylesheet" href="/module.css?t=${timestamp}" />`;
+  const mainjs = `<script defer type="module" src="/client/main.js?t=${timestamp}"></script>`;
 
   readFile(html_path, "utf8", async (err, content) => {
     if (err) {
@@ -116,7 +139,7 @@ export async function servePage({ res, pathname, route, params }) {
         `
           <script>
             window.__COTTON_DATA__ = ${JSON.stringify(cotton_data)};
-            ${process.argv[2] && process.argv[2] == "dev" ? ws_client_js : ""}
+            ${process.argv[2] && process.argv[2] == "dev" ? dev_js : ""}
           </script>
           ${!(page_error || loader_error) ? mainjs : ""}
           `
