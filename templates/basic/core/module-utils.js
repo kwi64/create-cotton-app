@@ -1,92 +1,100 @@
+"use strict;";
+
 import { renderToString } from "react-dom/server";
 import { createElement } from "react";
 import { join, basename, extname, dirname } from "path";
-
 import config from "../cotton.config.js";
 import routes from "../route.config.js";
 
-const build_folder = config.build_folder || "build";
 /**
- * Checks if a transpiled function is async or not.
- * This method is specifically used to decide whether an esbuild transpiled function is async or not
- *
- * @param {(...args: any[]) => {}} method
- * @returns {boolean}
+ * @fileoverview
+ * This provides utility functions for:
+ * - Checking if a function transpiled by esbuild is async.
+ * - Retrieving loader data for a given route (e.g., from a `*.loader` file).
+ * - Rendering a React page to HTML with the above data.
+ * - Exporting a main client-side JS snippet (`mainjs`) for hydrating the React application.
  */
-export function isMethodAsync(method) {
-  const isArrowAsync = /^[^=>]+=>[^=>]+__async/.test(method.toString());
-  const isAsync = new RegExp(`${method.name}[^{]+{[^{]+__async`).test(
-    method.toString()
+
+/**
+ * The primary build folder location from cotton.config.js
+ * @type {string}
+ */
+const BUILD_FOLDER = config.build_folder || "build";
+
+/**
+ * Checks if an esbuild-transpiled function is async.
+ *
+ * @param {(...args: any[]) => any} func - The function to examine.
+ * @returns {boolean} True if the function is an async function.
+ */
+export function isMethodAsync(func) {
+  const isArrowAsync = /^[^=>]+=>[^=>]+__async/.test(func.toString());
+  const isAsync = new RegExp(`${func.name}[^{]+{[^{]+__async`).test(
+    func.toString()
   );
 
   return isArrowAsync || isAsync;
 }
 
 /**
- * Gets initial loader data from the route config
+ * Retrieves initial loader data for a given route from its associated loader file.
  *
- * @param {import("cottonjs").RouteKey} route
- * @returns
+ * @async
+ * @param {import("cottonjs").RouteKey} route - The route for which to load data.
+ * @returns {Promise<[string|null, any|undefined]>} A tuple of `[error, data]`. If error is `null`, `data` will contain loader results.
  */
 export async function getLoaderData(route) {
-  return new Promise(async (resolve) => {
-    const loader_data_location = routes[route].loader;
-    if (!loader_data_location) {
-      return resolve([null, undefined]);
-    }
+  const loaderFile = routes[route]?.loader;
+  if (!loaderFile) {
+    return [null, undefined];
+  }
 
-    let filename = basename(
-      loader_data_location,
-      !loader_data_location.endsWith(".loader")
-        ? extname(loader_data_location)
-        : ""
-    );
+  // Remove file extensions except for `.loader` to determine the base filename
+  const loaderFilename = basename(
+    loaderFile,
+    !loaderFile.endsWith(".loader") ? extname(loaderFile) : ""
+  );
 
-    console.log("filename", filename);
-    let module_path = join(dirname(loader_data_location), filename + ".js");
+  const modulePath = join(dirname(loaderFile), `${loaderFilename}.js`);
+  try {
+    // Dynamically import the loader module
+    const { default: loaderFunc } = await import(`../${modulePath}`);
 
-    try {
-      const { default: method } = await import(`../${module_path}`);
-
-      if (isMethodAsync(method)) {
-        method()
-          .then(
-            /** @param {*} output */ (output) => {
-              resolve([null, output]);
-            }
-          )
-          .catch(
-            /** @param {*} e */ (e) => {
-              const err = `Exception in loader method in '${routes[route].loader}' while processing route '${route}'`;
-              console.error("getLoaderData", {
-                error: err,
-                exception: e,
-              });
-              resolve([err, null]);
-            }
-          );
-      } else {
-        resolve([null, method()]);
+    if (isMethodAsync(loaderFunc)) {
+      try {
+        const output = await loaderFunc();
+        return [null, output];
+      } catch (error) {
+        const errMsg = `Exception in loader method in '${routes[route].loader}' while processing route '${route}'.`;
+        console.error("getLoaderData", {
+          error: errMsg,
+          exception: error,
+        });
+        return [errMsg, null];
       }
-    } catch (e) {
-      const err = `Either '${routes[route].loader}' loader file not found or exception in loader method while processing route '${route}'`;
-      console.error("getLoaderData", {
-        error: err,
-        exception: e,
-      });
-      resolve([err, null]);
+    } else {
+      return [null, loaderFunc()];
     }
-  });
+  } catch (error) {
+    const errMsg = `Either '${routes[route].loader}' not found or an exception occurred in the loader method for route '${route}'.`;
+    console.error("getLoaderData", {
+      error: errMsg,
+      exception: error,
+    });
+    return [errMsg, null];
+  }
 }
 
 /**
- * Gets page html populated with loader data
+ * Renders a page component to an HTML string, injecting the provided loader data as props.
  *
- * @param {import("cottonjs").RouteKey} route
- * @param {*} loader_data
- * @returns
+ * @async
+ * @param {import("cottonjs").RouteKey} route - The route whose page component should be rendered.
+ * @param {any} loaderData - Data to be passed to the page component as props.
+ * @returns {Promise<[string|null, string|null]>} A tuple of `[error, html]`.
+ *   If error is `null`, `html` will contain the rendered markup.
  */
-export async function getPageHtmlWithData(route, loader_data) {
+export async function getPageHtmlWithData(route, loaderData) {
   const page = routes[route].page;
   if (!page) {
     return [`Page not specified in route '${route}'`, null];
@@ -94,12 +102,12 @@ export async function getPageHtmlWithData(route, loader_data) {
 
   let filename = basename(page, extname(page));
 
-  let module_path = join(dirname(page), filename + ".js");
+  let modulePath = join(dirname(page), filename + ".js");
 
   try {
-    const { default: method } = await import(`../${module_path}`);
+    const { default: method } = await import(`../${modulePath}`);
 
-    const html = renderToString(createElement(method, loader_data));
+    const html = renderToString(createElement(method, loaderData));
     return [null, html];
   } catch (e) {
     const err = `Either default export is missing or page '${page}' not found while processing route '${route}'`;
@@ -111,25 +119,32 @@ export async function getPageHtmlWithData(route, loader_data) {
   }
 }
 
+/**
+ * A client-side entry script as a string, appended to `main.js`.
+ * It dynamically imports `route.config` at runtime, finds the matched route,
+ * and hydrates the root React element with the corresponding page component.
+ *
+ * @type {string}
+ */
 export const mainjs = `
-    import { createElement } from "react";
-    import { hydrateRoot } from "react-dom/client";
+  import { createElement } from "react";
+  import { hydrateRoot } from "react-dom/client";
 
-    const data = window.__COTTON_DATA__;
+  const data = window.__COTTON_DATA__;
 
 
-    import("./${build_folder}/route.config")
-      .then(({ default: routes }) => {
-        const loadPage = routes[data.route.key].module;
-        loadPage()
-          .then(({ default: page }) => {
-            hydrateRoot(document.getElementById("root"), createElement(page, data));
-          })
-          .catch((_) => {
-            console.error("Routes mismatch at", data.cotton.route);
-          });
-      })
-      .catch((err) => {
-        console.log("Error loading module", err);
-      });
-    `;
+  import("./${BUILD_FOLDER}/route.config")
+    .then(({ default: routes }) => {
+      const loadPage = routes[data.route.key].module;
+      loadPage()
+        .then(({ default: page }) => {
+          hydrateRoot(document.getElementById("root"), createElement(page, data));
+        })
+        .catch((_) => {
+          console.error("Routes mismatch at", data.cotton.route);
+        });
+    })
+    .catch((err) => {
+      console.log("Error loading module", err);
+    });
+  `;

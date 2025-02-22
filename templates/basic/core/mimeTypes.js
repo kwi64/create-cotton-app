@@ -1,3 +1,13 @@
+"use strict";
+
+/**
+ * @fileoverview
+ * A mapping of file extensions to their corresponding MIME types.
+ *
+ * This object helps in setting the correct "Content-Type" header when serving files.
+ * Each key is a file extension, and its value is the MIME type.
+ */
+
 const mimeTypes = {
   // Text files
   ".html": "text/html",

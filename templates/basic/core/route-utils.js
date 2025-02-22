@@ -1,48 +1,61 @@
+"use strict";
+
 import routes from "../route.config.js";
 
 /**
- * Finds the matching route based on the url
+ * @fileoverview
+ * This provides utility functions for matching a route
+ */
+
+/**
+ * Finds and returns the route in `route.config.js` that matches the given pathname,
+ * along with any dynamic parameters (e.g. ":id") captured from the URL.
  *
- * @param {string} pathname
- * @returns {{ route?: import("cottonjs").RouteKey, params?: {[key: string]: string} }}
+ * @param {string} pathname - The incoming URL path (e.g., "/users/123").
+ * @returns {{
+ *   route?: import("cottonjs").RouteKey,
+ *   params?: Record<string, string>,
+ * }} An object containing the matched route and the extracted parameters.
  */
 export function getMatchingRoute(pathname) {
-  let normalized_url = /\/$/.test(pathname) ? pathname : pathname + "/";
+  // Ensure a trailing slash for uniformity (e.g. "/users" -> "/users/")
+  let normalizedUrl = /\/$/.test(pathname) ? pathname : pathname + "/";
 
-  let matches = Object.keys(routes).filter((route) => {
+  let matchingRoutes = Object.keys(routes).filter((route) => {
     let normalized_route = /\/$/.test(route) ? route : route + "/";
 
-    let regex = new RegExp(
+    let routeRegex = new RegExp(
       "^" + normalized_route.replace(/:[^\/]+/g, "[^\\/]+") + "$",
       "i"
     );
 
-    return regex.test(normalized_url);
+    return routeRegex.test(normalizedUrl);
   });
 
-  if (matches.length > 0) {
-    let match = /** @type {import("cottonjs").RouteKey} */ (matches[0]);
+  if (matchingRoutes.length > 0) {
+    let match = /** @type {import("cottonjs").RouteKey} */ (matchingRoutes[0]);
 
-    const normalized_match = /\/$/.test(matches[0]) ? match : match + "/";
+    const normalizedMatch = /\/$/.test(matchingRoutes[0]) ? match : match + "/";
 
-    const match_regex = new RegExp(
-      `^${normalized_match.replace(/:[^\/]+/g, ":([^\\/]+)")}$`,
+    const paramKeyRegex = new RegExp(
+      `^${normalizedMatch.replace(/:[^\/]+/g, ":([^\\/]+)")}$`,
       "i"
     );
-    const url_regex = new RegExp(
-      `^${normalized_match.replace(/:[^\/]+/g, "([^\\/]+)")}$`,
+
+    const paramValueRegex = new RegExp(
+      `^${normalizedMatch.replace(/:[^\/]+/g, "([^\\/]+)")}$`,
       "i"
     );
-    const key_matches = normalized_match.match(match_regex);
-    const value_matches = normalized_url.match(url_regex);
+    const keyMatches = normalizedMatch.match(paramKeyRegex);
+    const valueMatches = normalizedUrl.match(paramValueRegex);
 
-    /** @type {{[key: string]: string}} */
+    /** @type {Record<string, string>} */
     const params = {};
 
-    if (key_matches && value_matches) {
-      if (key_matches.length == value_matches.length) {
-        for (let i = 1; i < key_matches.length; i++) {
-          params[key_matches[i]] = value_matches[i];
+    if (keyMatches && valueMatches) {
+      if (keyMatches.length == valueMatches.length) {
+        for (let i = 1; i < keyMatches.length; i++) {
+          params[keyMatches[i]] = valueMatches[i];
         }
       }
     }

@@ -1,12 +1,22 @@
+"use strict";
+
 import busboy from "busboy";
 import { IncomingMessage } from "http";
 
 /**
- *
- * @param {IncomingMessage} req
- * @returns
+ * @fileoverview
+ * Utility functions for parsing form data from HTTP requests:
+ * - `parseUrlEncodedFormData` for application/x-www-form-urlencoded data.
+ * - `parseMultipartFormData` for multipart/form-data.
  */
-export const parseUrlEncodedFormData = (req) => {
+
+/**
+ * Parses `application/x-www-form-urlencoded` data from an incoming HTTP request.
+ *
+ * @param {IncomingMessage} req - The Node.js HTTP request object.
+ * @returns {Promise<Record<string, string>>} A promise that resolves to an object of key-value pairs from the form data.
+ */
+export function parseUrlEncodedFormData(req) {
   return new Promise((resolve, reject) => {
     let chunks = "";
 
@@ -14,38 +24,50 @@ export const parseUrlEncodedFormData = (req) => {
       chunks += chunk.toString();
     });
 
-    req.on("error", (err) => {
-      reject(err);
+    req.on("error", (error) => {
+      reject(error);
     });
 
     req.on("end", () => {
-      const params = new URLSearchParams(chunks);
-      const form_values = Object.fromEntries(params.entries());
-      resolve(form_values);
+      try {
+        const params = new URLSearchParams(chunks);
+        const formValues = Object.fromEntries(params.entries());
+        resolve(formValues);
+      } catch (error) {
+        reject(error);
+      }
     });
   });
-};
+}
 
 /**
+ * Parses `multipart/form-data` from an incoming HTTP request using Busboy.
  *
- * @param {IncomingMessage} req
- * @returns
+ * Captures both file and text fields.
+ * File fields include a Buffer of file contents under `value`.
+ * Text fields store their string value in `value`.
+ *
+ * @param {IncomingMessage} req - The Node.js HTTP request object.
+ * @returns {Promise<Record<string, any>>}
+ *   A promise that resolves to an object where each key is a form field name.
+ *   For file fields, the value is `{ type, fileName, mimeType, value<Buffer> }`.
+ *   For text fields, the value is `{ type, value<string> }`.
  */
-export const parseMultipartFormData = (req) => {
+export function parseMultipartFormData(req) {
   return new Promise((resolve, reject) => {
     const bb = busboy({ headers: req.headers });
 
-    /** @type {{ [name: string]: {} }} */
+    /** @type {Record<string, any>} */
     const result = {};
 
     bb.on("file", (name, file, info) => {
       const { filename, mimeType } = info;
 
       /** @type {*[]} */
-      const chunks = [];
+      const fileChunks = [];
       file
         .on("data", (data) => {
-          chunks.push(data);
+          fileChunks.push(data);
         })
         .on("error", (err) => {
           reject(err);
@@ -55,7 +77,7 @@ export const parseMultipartFormData = (req) => {
             type: "file",
             fileName: filename,
             mimeType: mimeType,
-            value: Buffer.concat(chunks),
+            value: Buffer.concat(fileChunks),
           };
         });
     });
@@ -72,6 +94,7 @@ export const parseMultipartFormData = (req) => {
     bb.on("finish", () => {
       resolve(result);
     });
+
     req.pipe(bb);
   });
-};
+}

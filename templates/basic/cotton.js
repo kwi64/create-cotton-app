@@ -1,3 +1,5 @@
+"use strict";
+
 import chokidar from "chokidar";
 import { join, resolve } from "path";
 import { ChildProcess, fork } from "child_process";
@@ -6,26 +8,35 @@ import { existsSync } from "fs";
 import config from "./cotton.config.js";
 import { IncomingMessage } from "http";
 
-/**
- * @type {NodeJS.Timeout}
- */
-let throttler_timer_id;
+const FALLBACK_HOST = "127.0.0.1";
+const FALLBACK_PORT = 4522;
 
 /**
- * @type {boolean}
+ * Checks if the code is running inside a Docker container by testing
+ * for the presence of the /.dockerenv file. If yes, host will be set to 0.0.0.0.
  */
-let reload_in_progress;
+const IS_DOCKER = existsSync("/.dockerenv");
 
 /**
- * @type {ChildProcess?}
+ * Environment for build and development server.
  */
-let server;
+const ENVIRONMENT = "dev";
 
-const host = config.host || "127.0.0.1";
-const port = config.dev_env_websocket_port || 4522;
-const build_folder = config.build_folder || "build";
+/**
+ * Host and port setup for WebSocket connections.
+ */
+const HOST = config.host || FALLBACK_HOST;
+const PORT = config.dev_env_websocket_port || FALLBACK_PORT;
 
-const dev_env_files_to_watch = config.dev_env_files_to_watch || [
+/**
+ * Specifies the build folder for the compiled output.
+ */
+const BUILD_FOLDER = config.build_folder || "build";
+
+/**
+ * List of files and directories to watch for changes that trigger reloads.
+ */
+const DEV_ENV_FILES_TO_WATCH = config.dev_env_files_to_watch || [
   "./src",
   "index.html",
   "routes.config.js",
@@ -33,100 +44,182 @@ const dev_env_files_to_watch = config.dev_env_files_to_watch || [
   "build.js",
 ];
 
-const server_reload_rate_limit_ms = 200;
+/**
+ * Minimum time (in ms) between development server reloads to prevent excessive reloading.
+ */
+const SERVER_RELOAD_RATE_LIMIT_MS = 200;
 
-const isDocker = existsSync("/.dockerenv"); // if docker; host will be statically set to 0.0.0.0
+/**
+ * Paths for builder and server scripts.
+ */
+const BASE_PATH = join(resolve(), BUILD_FOLDER);
+const BUILDER_SCRIPT = join(resolve(), "build.js");
+const SERVER_SCRIPT = join(resolve(), BUILD_FOLDER, "server.js");
 
-const wss = new WebSocketServer({ host: isDocker ? "0.0.0.0" : host, port });
+/**
+ * Timer ID used for throttling server reload events.
+ * @type {NodeJS.Timeout | null}
+ */
+let throttlerTimerId;
 
-const basePath = join(resolve(), build_folder);
-const builderjs = join(resolve(), "build.js");
-const serverjs = join(resolve(), build_folder, "server.js");
+/**
+ * Indicates whether a reload operation is already in progress.
+ * @type {boolean}
+ */
+let isReloadInProgress;
 
-const ENVIRONMENT = "dev";
+/**
+ * A reference to the builder process spawned via `fork()`.
+ * @type {ChildProcess | null}
+ */
+let serverProcess = null;
 
-let builder = fork(builderjs, [ENVIRONMENT]);
-builder.on(
-  "message",
-  /**
-   * @param {import("cottonjs").IPCMessage} message
-   */
-  (message) => {
-    if (message.status == "done") {
-      server = fork(serverjs, [ENVIRONMENT], { cwd: basePath });
-    }
-  }
-);
+/**
+ * A reference to the builder process spawned via `fork()`.
+ * @type {ChildProcess | null}
+ */
+let builderProcess = null;
 
-wss.on(
+/**
+ * WebSocket server for notifying connected clients about reloads.
+ * Uses Docker-aware hostname binding if applicable.
+ */
+const webSocketServer = new WebSocketServer({
+  host: IS_DOCKER ? "0.0.0.0" : HOST,
+  port: PORT,
+});
+
+webSocketServer.on(
   "connection",
   /**
+   * Handles new WebSocket connections.
    *
-   * @param {import("cottonjs").WebSocket} socket
-   * @param {IncomingMessage} req
+   * @param {import("cottonjs").WebSocket} socket - The connected WebSocket client.
+   * @param {IncomingMessage} req - The incoming HTTP/WS upgrade request.
    */
   (socket, req) => {
-    const params = new URL(req.url ?? "/", `http://${host}`).searchParams;
-    const url_path = params.get("url_path");
-    if (url_path) {
-      console.log("Watching for changes in: ", url_path);
-      socket.url_path = url_path;
+    try {
+      // Extract the URL search params to identify the requested path
+      const params = new URL(req.url ?? "/", `http://${HOST}`).searchParams;
+      const urlPath = params.get("url_path");
+      if (urlPath) {
+        socket.url_path = urlPath;
+        console.log("Watching for changes in:", urlPath);
+      }
+    } catch (error) {
+      console.error("Error during WebSocket connection:", error);
     }
   }
 );
 
-function notify() {
-  wss.clients.forEach((client) => {
+/**
+ * Spawns the builder process and listens for its "done" message.
+ * Once build is complete, spawns the server process.
+ */
+function initializeBuilderAndServer() {
+  builderProcess = fork(BUILDER_SCRIPT, [ENVIRONMENT]);
+
+  builderProcess.on("error", (error) => {
+    console.error("Builder process error:", error);
+  });
+
+  builderProcess.on(
+    "message",
+    /**
+     * @param {import("cottonjs").IPCMessage} message
+     */
+    (message) => {
+      if (message.status == "done") {
+        spawnServerProcess();
+      }
+    }
+  );
+}
+
+/**
+ * Spawns the server process that actually handles HTTP requests.
+ */
+function spawnServerProcess(isReload = false) {
+  const args = isReload ? [ENVIRONMENT, "reloading"] : [ENVIRONMENT];
+  serverProcess = fork(SERVER_SCRIPT, args, { cwd: BASE_PATH });
+
+  serverProcess.on("error", (err) => {
+    console.error("Server process error:", err);
+  });
+}
+
+/**
+ * Sends a "reload" message to every connected WebSocket client.
+ */
+function sendReloadMessageToClients() {
+  webSocketServer.clients.forEach((client) => {
     client.send(JSON.stringify({ type: "reload" }));
   });
 }
 
-function reloadAndNotify() {
-  if (throttler_timer_id) {
-    clearTimeout(throttler_timer_id);
+/**
+ * Orchestrates the rebuild and restart of the server, then notifies WebSocket clients.
+ * Throttles reload events to avoid spamming rebuilds.
+ */
+function reloadAndNotifyClients() {
+  if (throttlerTimerId) {
+    clearTimeout(throttlerTimerId);
   }
 
-  const run_builder_and_server = () => {
-    builder = fork(builderjs, [ENVIRONMENT]);
-    builder.on(
-      "message",
-      /**
-       * @param {import("cottonjs").IPCMessage} message
-       */
-      (message) => {
-        if (message.status == "done") {
-          server = fork(serverjs, [ENVIRONMENT, "reloading"], {
-            cwd: basePath,
-          });
-          reload_in_progress = false;
-          notify();
-        }
-      }
-    );
-  };
+  // Delayed execution to enforce rate limitin
+  throttlerTimerId = setTimeout(() => {
+    if (serverProcess && builderProcess) {
+      if (isReloadInProgress) return;
+      isReloadInProgress = true;
 
-  throttler_timer_id = setTimeout(() => {
-    if (server && builder) {
-      if (reload_in_progress) return;
-      reload_in_progress = true;
-
-      if (server.connected) {
-        server.kill();
-        server.on("close", () => {
-          run_builder_and_server();
+      // Gracefully terminate the old server process before starting a new one
+      if (serverProcess.connected) {
+        serverProcess.kill();
+        serverProcess.on("close", () => {
+          buildAndStartServer();
         });
       } else {
-        run_builder_and_server();
+        buildAndStartServer();
       }
     }
-  }, server_reload_rate_limit_ms);
+  }, SERVER_RELOAD_RATE_LIMIT_MS);
 }
 
-const watcher = chokidar.watch(dev_env_files_to_watch, {
+/**
+ * Builds the application using the builder script, then starts the server process.
+ */
+function buildAndStartServer() {
+  builderProcess = fork(BUILDER_SCRIPT, [ENVIRONMENT]);
+  builderProcess.on(
+    "message",
+    /**
+     * @param {import("cottonjs").IPCMessage} message
+     */
+    (message) => {
+      if (message.status == "done") {
+        serverProcess = fork(SERVER_SCRIPT, [ENVIRONMENT, "reloading"], {
+          cwd: BASE_PATH,
+        });
+        isReloadInProgress = false;
+        sendReloadMessageToClients();
+      }
+    }
+  );
+}
+
+/**
+ * Chokidar instance to watch relevant files for changes.
+ */
+const watcher = chokidar.watch(DEV_ENV_FILES_TO_WATCH, {
   persistent: true,
   ignoreInitial: true,
 });
 
+/**
+ * Initiates the rebuild/reload flow upon file changes.
+ */
 watcher.on("all", () => {
-  reloadAndNotify();
+  reloadAndNotifyClients();
 });
+
+initializeBuilderAndServer();

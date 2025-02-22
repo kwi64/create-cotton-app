@@ -1,50 +1,48 @@
-import { IncomingMessage, ServerResponse, createServer } from "http";
+"use strict";
+
+import { IncomingMessage, ServerResponse } from "http";
 import { readFile, existsSync } from "fs";
 import { format, parse } from "url";
 import { join, resolve, extname, relative } from "path";
 import { getFormattedMiddlewareOutput } from "./middleware-utils.js";
-import { getLoaderData, getPageHtmlWithData } from "./module-utils.js";
+import {
+  getLoaderData,
+  getPageHtmlWithData,
+  isMethodAsync,
+} from "./module-utils.js";
 import routes from "../route.config.js";
 import config from "../cotton.config.js";
 import mimeTypes from "./mimeTypes.js";
 
-const host = config.host || "localhost";
-const dev_env_scroll_watch_id = config.dev_env_scroll_watch_id || "root";
-const dev_env_websocket_port = config.dev_env_websocket_port || 4522;
-
 /**
- * Checks if a transpiled function is async or not.
- * This method is specifically used to decide whether an esbuild transpiled function is async or not
- *
- * @param {(...args: any[]) => {}} method
- * @returns {boolean}
+ * @fileoverview
+ * Provides functions to serve static files, render pages, and handle API endpoints.
  */
-function isMethodAsync(method) {
-  const isArrowAsync = /^[^=>]+=>[^=>]+__async/.test(method.toString());
-  const isAsync = new RegExp(`${method.name}[^{]+{[^{]+__async`).test(
-    method.toString()
-  );
 
-  return isArrowAsync || isAsync;
-}
+const {
+  host = "localhost",
+  dev_env_scroll_watch_id = "root",
+  dev_env_websocket_port = 4522,
+} = config;
 
 /**
- * Serves a static file
+ * Serves a static file from the file system.
  *
- * @param {ServerResponse} res
- * @param {string} url
+ * @async
+ * @param {ServerResponse} res - The HTTP response object.
+ * @param {string} url - The file path or URL to serve (relative to the project root).
  */
 export async function serveFile(res, url) {
   const filePath = join(resolve(), url);
 
-  let ext = /** @type {keyof mimeTypes} */ (String(extname(url)));
+  let extension = /** @type {keyof mimeTypes} */ (String(extname(url)));
 
-  let contentType = mimeTypes[ext] || "text/plain";
+  let contentType = mimeTypes[extension] || "text/plain";
 
-  readFile(filePath, (err, content) => {
-    if (err) {
+  readFile(filePath, (error, content) => {
+    if (error) {
       res.writeHead(500, { "Content-Type": "text/plain" });
-      res.end("500 Internal Server Error. " + err);
+      res.end(`500 Internal Server Error. ${error}`);
       return;
     }
 
@@ -52,19 +50,18 @@ export async function serveFile(res, url) {
       "Content-Type": contentType,
     });
     res.end(content);
-    return;
   });
 }
 
 /**
- * Serves the relevant page specified in the routes
+ * Serves a page. Fetches loader data, then renders the page into HTML.
  *
- * @param {{
- *  res: ServerResponse,
- *  pathname: string,
- *  route: import("cottonjs").RouteKey,
- *  params?: {[key: string]: string}
- * }} args
+ * @async
+ * @param {object} args
+ * @param {ServerResponse} args.res - The HTTP response object.
+ * @param {string} args.pathname - The requested URL path (e.g., "/users/123").
+ * @param {import("cottonjs").RouteKey} args.route - A route key from the application routes.
+ * @param {Record<string, string>} [args.params] - Key-value pairs for dynamic route parameters.
  */
 export async function servePage({ res, pathname, route, params }) {
   const [loader_error, loader_data] = await getLoaderData(route);
@@ -91,29 +88,30 @@ export async function servePage({ res, pathname, route, params }) {
     query: { url_path: pathname },
   });
 
-  const dev_js = `
-            const _scroll_watch_element = document.getElementById("${dev_env_scroll_watch_id}");
-            var _scroll_position = localStorage.getItem('${pathname}_scroll_position');
+  const devScript = `
+      const _scroll_watch_element = document.getElementById("${dev_env_scroll_watch_id}");
+      var _scroll_position = localStorage.getItem('${pathname}_scroll_position');
 
-            if (_scroll_position && _scroll_watch_element) {
-              _scroll_watch_element.scrollTo(0, _scroll_position);
-              localStorage.removeItem('${pathname}_scroll_position');
-            }
+      if (_scroll_position && _scroll_watch_element) {
+        _scroll_watch_element.scrollTo(0, _scroll_position);
+        localStorage.removeItem('${pathname}_scroll_position');
+      }
 
-            const socket = new WebSocket("${ws}");
-            socket.onmessage = (event) => {
-              const { type } = JSON.parse(event.data);
-              if (type === "reload") {
-                
-                if(_scroll_watch_element){
-                  localStorage.setItem("${pathname}_scroll_position", _scroll_watch_element.scrollTop);
-                }
+      const socket = new WebSocket("${ws}");
+      socket.onmessage = (event) => {
+        const { type } = JSON.parse(event.data);
+        if (type === "reload") {
+          
+          if(_scroll_watch_element){
+            localStorage.setItem("${pathname}_scroll_position", _scroll_watch_element.scrollTop);
+          }
 
-                location.reload();
-              }
-            };`;
+          location.reload();
+        }
+      };
+    `;
 
-  const html_path = join(resolve(), "index.html");
+  const htmlPath = join(resolve(), "index.html");
 
   const globalCssExists = existsSync(join(resolve(), "global.css"));
   let moduleCssExists = existsSync(join(resolve(), "module.css"));
@@ -122,9 +120,9 @@ export async function servePage({ res, pathname, route, params }) {
 
   const globalCss = `<link rel="stylesheet" href="/global.css?t=${timestamp}" />`;
   const moduleCss = `<link rel="stylesheet" href="/module.css?t=${timestamp}" />`;
-  const mainjs = `<script defer type="module" src="/client/main.js?t=${timestamp}"></script>`;
+  const mainScriptTag = `<script defer type="module" src="/client/main.js?t=${timestamp}"></script>`;
 
-  readFile(html_path, "utf8", async (err, content) => {
+  readFile(htmlPath, "utf8", async (err, content) => {
     if (err) {
       res.writeHead(500, { "Content-Type": "text/plain" });
       res.end(
@@ -133,34 +131,40 @@ export async function servePage({ res, pathname, route, params }) {
       return;
     }
 
+    const devMode = process.argv[2] === "dev";
+
     let html = content
       .replace(
         "<!--scripts-->",
         `
           <script>
             window.__COTTON_DATA__ = ${JSON.stringify(cotton_data)};
-            ${process.argv[2] && process.argv[2] == "dev" ? dev_js : ""}
+            ${devMode ? devScript : ""}
           </script>
-          ${!(page_error || loader_error) ? mainjs : ""}
-          `
+          ${!(page_error || loader_error) ? mainScriptTag : ""}
+        `
       )
       .replace(
         "<!--css-->",
-        `${globalCssExists ? globalCss : ""}
-          ${moduleCssExists ? moduleCss : ""}`
+        `
+          ${globalCssExists ? globalCss : ""}
+          ${moduleCssExists ? moduleCss : ""}
+        `
       )
-      .replace("<!--page-->", page_error || loader_error || page_html);
+      .replace("<!--page-->", page_error || loader_error || page_html || "");
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(html);
-    return;
   });
 }
 
 /**
+ * Handles calls to API endpoints under the `/api` path.
+ * Dynamically loads an endpoint module, checks optional middleware,
+ * and executes the endpoint’s response method.
  *
- *
- * @param {IncomingMessage} req
- * @param {ServerResponse} res
+ * @async
+ * @param {IncomingMessage} req - The HTTP request object.
+ * @param {ServerResponse} res - The HTTP response object.
  */
 export async function serveApi(req, res) {
   let { pathname } = parse(req.url ?? "/", true);
@@ -171,27 +175,27 @@ export async function serveApi(req, res) {
   /**
    * @type {string | undefined} method_name
    */
-  let method_name;
+  let methodName;
 
-  const module_path = join("src", normalized_path).replace(
+  const modulePath = join("src", normalized_path).replace(
     /^(src\\api(?:\\.+)*\\(?:[^\\]+))\\([^\\]+)\\$/g,
     (_, mpath, method) => {
-      method_name = method;
+      methodName = method;
       return mpath;
     }
   );
 
-  const api_url = relative("src", module_path).replace(/\\/g, "/");
+  const apiUrl = relative("src", modulePath).replace(/\\/g, "/");
 
-  if (!relative(join("src", "api"), module_path)) {
+  if (!relative(join("src", "api"), modulePath)) {
     res.writeHead(400, { "Content-Type": "text/plain" });
-    res.end(`Invalid api call with url '/${api_url}'`);
+    res.end(`Invalid api call with url '/${apiUrl}'`);
     return;
   }
 
-  if (!method_name) {
+  if (!methodName) {
     res.writeHead(400, { "Content-Type": "text/plain" });
-    res.end(`No endpoint specified in the api url '/${api_url}'`);
+    res.end(`No endpoint specified in the api url '/${apiUrl}'`);
     return;
   }
 
@@ -203,113 +207,123 @@ export async function serveApi(req, res) {
   let module;
 
   try {
-    module = await import(`../${module_path}.js`);
+    module = await import(`../${modulePath}.js`);
 
     if (typeof module.default == "function") {
-      const [e, primaryMiddlewareOutput] = await getFormattedMiddlewareOutput(
-        req,
-        module.default
-      );
+      const [primaryMiddlewareError, primaryMiddlewareOutput] =
+        await getFormattedMiddlewareOutput(req, module.default);
 
-      if (e) {
-        const err = `An error occured in the primary middleware at '${api_url}'. See server log for more info.`;
+      if (primaryMiddlewareError) {
+        const errorMsg = `An error occured in the primary middleware at '${apiUrl}'. See server log for more info.`;
         console.error("serveApi", {
-          error: err,
-          exception: e,
+          error: errorMsg,
+          exception: primaryMiddlewareError,
         });
         res.writeHead(500, { "Content-Type": "text/plain" });
-        res.end(err);
+        res.end(errorMsg);
         return;
       }
 
-      if (!primaryMiddlewareOutput.allow) {
+      if (primaryMiddlewareOutput != null && !primaryMiddlewareOutput.allow) {
         res.writeHead(primaryMiddlewareOutput.code ?? 401, {
           "Content-Type": primaryMiddlewareOutput.contentType ?? "text/plain",
         });
-        res.end("PRIMARY: " + primaryMiddlewareOutput.message);
+        res.end(primaryMiddlewareOutput.message);
         return;
       }
     }
-  } catch (e) {
-    const err = `An error occured in the primary middleware at '${api_url}'. See server log for more info.`;
+  } catch (error) {
+    const errorMsg = `An error occured in the primary middleware at '${apiUrl}'. See server log for more info.`;
     console.error("serveApi", {
-      error: err,
-      exception: e,
+      error: errorMsg,
+      exception: error,
     });
     res.writeHead(500, { "Content-Type": "text/plain" });
-    res.end(err);
+    res.end(errorMsg);
     return;
   }
 
-  if (!module[`${method_name}`]) {
+  if (!module[`${methodName}`]) {
     res.writeHead(500, { "Content-Type": "text/plain" });
     res.end(
-      `Endpoint '${method_name}' is not defined or exported from '${api_url}'.`
+      `Endpoint '${methodName}' is not defined or exported from '${apiUrl}'.`
     );
     return;
   }
 
   if (
-    module[`${method_name}`].method &&
-    !new RegExp(module[`${method_name}`].method, "i").test(req.method ?? "GET")
+    module[`${methodName}`].method &&
+    !new RegExp(module[`${methodName}`].method, "i").test(req.method ?? "GET")
   ) {
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end(
-      `Endpoint '${method_name}' expected HTTP ${
-        module[`${method_name}`].method
-      } but received HTTP ${req.method} at '${api_url}'.`
+      `Endpoint '${methodName}' expected HTTP ${
+        module[`${methodName}`].method
+      } but received HTTP ${req.method} at '${apiUrl}'.`
     );
     return;
   }
 
   try {
-    if (typeof module[`${method_name}`].middleware == "function") {
+    if (typeof module[`${methodName}`].middleware == "function") {
       const [error, secondaryMiddlewareOutput] =
         await getFormattedMiddlewareOutput(
           req,
-          module[`${method_name}`].middleware
+          module[`${methodName}`].middleware
         );
 
-      if (!secondaryMiddlewareOutput.allow) {
+      if (error) {
+        const errorMsg = `An error occurred in the middleware at '${apiUrl}/${methodName}'. See server logs for details.`;
+        console.error("serveApi", {
+          error: errorMsg,
+          exception: error,
+        });
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end(errorMsg);
+        return;
+      }
+
+      if (
+        secondaryMiddlewareOutput != null &&
+        !secondaryMiddlewareOutput.allow
+      ) {
         res.writeHead(secondaryMiddlewareOutput.code ?? 401, {
-          "Content-Type": secondaryMiddlewareOutput.contentType,
+          "Content-Type": secondaryMiddlewareOutput.contentType ?? "text/plain",
         });
         res.end(secondaryMiddlewareOutput.message);
         return;
       }
     }
-  } catch (e) {
-    const err = `An error occured in the middleware at '${api_url}/${method_name}' endpoint. See server logs for more info.`;
+  } catch (error) {
+    const errorMsg = `An error occured in the middleware at '${apiUrl}/${methodName}' endpoint. See server logs for more info.`;
     console.error("serveApi", {
-      error: err,
-      exception: e,
+      error: errorMsg,
+      exception: error,
     });
     res.writeHead(500, { "Content-Type": "text/plain" });
-    res.end(err);
+    res.end(errorMsg);
     return;
   }
 
-  if (!module[`${method_name}`].response) {
+  if (!module[`${methodName}`].response) {
     res.writeHead(404, { "Content-Type": "text/plain" });
-    res.end(
-      `response() is not defined in '${api_url}/${method_name}' endpoint.`
-    );
+    res.end(`response() is not defined in '${apiUrl}/${methodName}' endpoint.`);
     return;
   }
 
   try {
-    if (isMethodAsync(module[`${method_name}`].response)) {
-      await module[`${method_name}`].response({ req, res });
+    if (isMethodAsync(module[`${methodName}`].response)) {
+      await module[`${methodName}`].response({ req, res });
     } else {
-      module[`${method_name}`].response({ req, res });
+      module[`${methodName}`].response({ req, res });
     }
-  } catch (e) {
-    const err = `An error occured in the response() at '${api_url}/${method_name} endpoint'. See server logs for more info.`;
+  } catch (error) {
+    const errorMsg = `An error occured in the response() at '${apiUrl}/${methodName} endpoint'. See server logs for more info.`;
     console.error("serveApi", {
-      error: err,
-      exception: e,
+      error: errorMsg,
+      exception: error,
     });
     res.writeHead(500, { "Content-Type": "text/plain" });
-    res.end(err);
+    res.end(errorMsg);
   }
 }
